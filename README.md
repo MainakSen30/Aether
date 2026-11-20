@@ -45,6 +45,7 @@ Versions were resolved against Google Maven and Maven Central before implementat
 
 ```text
 Aether/
+├── .github/workflows/android-ci.yml
 ├── app/                         Android application assembly
 ├── core/
 │   ├── model/                   Pure Kotlin models, IDs, theme/asset models (JVM)
@@ -225,7 +226,25 @@ APK output: `app/build/outputs/apk/debug/app-debug.apk`.
 To open in Android Studio: **File → Open → /Users/mainaksen/projects/Aether**. On the test device,
 choose Aether in Android's default-launcher dialog; the app never changes the default itself.
 
-## 11. Known limitations
+## 11. Continuous integration
+
+`.github/workflows/android-ci.yml` runs on pushes to `main`, pull requests targeting `main`, and manual
+`workflow_dispatch`. On a GitHub-hosted Ubuntu runner it validates the Gradle wrapper, sets up JDK 17
+and Android SDK platform 36/build-tools 36.1.0, configures Gradle caching, verifies project
+configuration, runs `./gradlew test :app:assembleDebug --no-daemon`, checks that the APK is non-empty,
+and uploads it as the `aether-debug-apk` workflow artifact with 14-day retention.
+
+Find the APK in the successful run's **Artifacts** section as `aether-debug-apk`; the archive contains
+`app/build/outputs/apk/debug/app-debug.apk`.
+
+Equivalent local verification (with `local.properties` pointing at your Android SDK):
+
+```bash
+./gradlew projects --no-daemon
+./gradlew test :app:assembleDebug --no-daemon
+```
+
+## 12. Known limitations
 
 - The launcher screen is a placeholder; no grid, drawer, search, folders, drag-and-drop, gestures,
   widgets, control center, Studio, or settings UI.
@@ -243,7 +262,7 @@ choose Aether in Android's default-launcher dialog; the app never changes the de
 - No device run was performed; HOME eligibility was verified by manifest inspection, not by changing
   the device's default launcher.
 
-## 12. Future implementation milestones
+## 13. Future implementation milestones
 
 1. ~~Seed built-in theme metadata and persist full theme definitions; add safe activation with rollback.~~ Completed.
 2. ~~Strengthen Theme Engine and Asset Engine validation as a real boundary for persistent state.~~ Completed.
