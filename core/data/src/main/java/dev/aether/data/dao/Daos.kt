@@ -1,12 +1,14 @@
 package dev.aether.data.dao
 
 import androidx.room.Dao
+import androidx.room.Insert
 import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Upsert
 import dev.aether.data.entity.AssetImportRecordEntity
 import dev.aether.data.entity.AssetMetadataEntity
 import dev.aether.data.entity.AssetReferenceEntity
+import dev.aether.data.entity.ThemeDraftEntity
 import dev.aether.data.entity.ThemeMetadataEntity
 import kotlinx.coroutines.flow.Flow
 
@@ -15,11 +17,36 @@ interface ThemeMetadataDao {
     @Query("SELECT * FROM theme_metadata")
     fun observeAll(): Flow<List<ThemeMetadataEntity>>
 
+    @Query("SELECT * FROM theme_metadata")
+    suspend fun getAll(): List<ThemeMetadataEntity>
+
     @Query("SELECT * FROM theme_metadata WHERE id = :id")
     suspend fun get(id: String): ThemeMetadataEntity?
 
+    @Query("SELECT * FROM theme_drafts")
+    suspend fun getDrafts(): List<ThemeDraftEntity>
+
+    @Query("SELECT * FROM theme_drafts WHERE id = :id")
+    suspend fun getDraft(id: String): ThemeDraftEntity?
+
+    @Query("SELECT COUNT(*) FROM theme_metadata WHERE id = :id")
+    suspend fun count(id: String): Int
+
+    @Insert
+    suspend fun insert(entity: ThemeMetadataEntity)
+
     @Upsert
     suspend fun upsert(entity: ThemeMetadataEntity)
+
+    @Upsert
+    suspend fun upsertDraft(entity: ThemeDraftEntity)
+
+    @Transaction
+    suspend fun insertIfAbsent(entity: ThemeMetadataEntity): Boolean {
+        if (count(entity.id) != 0) return false
+        insert(entity)
+        return true
+    }
 }
 
 @Dao

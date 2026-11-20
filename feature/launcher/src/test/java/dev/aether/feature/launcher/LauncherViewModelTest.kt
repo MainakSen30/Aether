@@ -44,7 +44,7 @@ class LauncherViewModelTest {
         val viewModel = LauncherViewModel(controller)
         assertFalse(viewModel.uiState.value.foundationReady)
 
-        controller.load()
+        controller.initialize()
         assertTrue(viewModel.uiState.value.foundationReady)
         assertEquals("aether.black", viewModel.uiState.value.activeThemeName)
 
@@ -55,13 +55,29 @@ class LauncherViewModelTest {
 
 private class FakeThemeRepository : ThemeRepository {
     private val active = MutableStateFlow<ThemeId?>(null)
+    private val definitions = mutableMapOf<ThemeId, ThemeDefinition>()
     override fun observeActiveThemeId(): Flow<ThemeId?> = active
     override fun observeMetadata(): Flow<List<ThemeMetadata>> = flowOf(emptyList())
     override suspend fun getMetadata(id: ThemeId): ThemeMetadata? = null
+    override suspend fun getDefinition(id: ThemeId): ThemeDefinition? = definitions[id]
+    override suspend fun getDefinitions(): List<ThemeDefinition> = definitions.values.toList()
+    override suspend fun saveDefinition(theme: ThemeDefinition) {
+        definitions[theme.id] = theme
+    }
     override suspend fun saveDraft(theme: ThemeDefinition) = Unit
     override suspend fun getDraft(id: ThemeId): ThemeDefinition? = null
+    override suspend fun seedBuiltIns(
+        definitions: List<ThemeDefinition>,
+        defaultId: ThemeId,
+    ): Result<Unit> = Result.success(Unit)
+    override suspend fun initialize(defaultId: ThemeId): Result<Unit> {
+        saveDefinition(AetherThemeCatalog.AETHER_BLACK)
+        if (active.value == null) active.value = defaultId
+        return Result.success(Unit)
+    }
     override suspend fun activate(id: ThemeId): Result<Unit> {
         active.value = id
+        definitions[id]?.let { saveDefinition(it) }
         return Result.success(Unit)
     }
 }

@@ -20,26 +20,47 @@ class ThemeController(
     private val _active = MutableStateFlow<ResolvedTheme?>(null)
     val active: StateFlow<ResolvedTheme?> = _active.asStateFlow()
 
-    suspend fun load() {
-        val id = repository.observeActiveThemeId().first() ?: catalog.default.id
-        publish(id)
+    suspend fun initialize(): Result<Unit> {
+        val seeding = repository.seedBuiltIns(catalog.definitions(), catalog.default.id)
+        if (seeding.isFailure) {
+            _active.value = null
+            return seeding
+        }
+        val initialization = repository.initialize(catalog.default.id)
+        if (initialization.isFailure) {
+            _active.value = null
+            return initialization
+        }
+        return load()
+    }
+
+    suspend fun load(): Result<Unit> = runCatching {
+        val id = repository.observeActiveThemeId().first() ?: error("No active theme configured")
+        publish(id).getOrThrow()
     }
 
     suspend fun activate(id: ThemeId): Result<Unit> {
         val result = repository.activate(id)
-        if (result.isSuccess) publish(id)
+        if (result.isSuccess) {
+            val published = publish(id)
+            if (published.isFailure) {
+                _active.value = null
+                return published
+            }
+        }
         return result
     }
 
     suspend fun saveDraft(theme: ThemeDefinition) = repository.saveDraft(theme)
 
-    fun preview(theme: ThemeDefinition): ResolvedTheme =
-        resolver.resolve(theme, catalog.definitions())
+    suspend fun preview(theme: ThemeDefinition): Result<ResolvedTheme> = runCatching {
+        resolver.resolve(theme, repository.getDefinitions() + theme)
+    }
 
-    private suspend fun publish(id: ThemeId) {
-        val draft = repository.getDraft(id)
-        val theme = draft ?: catalog.find(id) ?: catalog.default
-        val definitions = catalog.definitions() + listOfNotNull(draft, theme)
+    private suspend fun publish(id: ThemeId): Result<Unit> = runCatching {
+        val theme = repository.getDraft(id) ?: repository.getDefinition(id)
+            ?: error("Invalid persisted theme: ${id.value}")
+        val definitions = repository.getDefinitions()
         _active.value = resolver.resolve(theme, definitions)
     }
 }

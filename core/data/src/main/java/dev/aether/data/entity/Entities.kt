@@ -9,6 +9,17 @@ data class ThemeMetadataEntity(
     val name: String,
     val parentId: String?,
     val origin: String,
+    val schemaVersion: Int = 0,
+    val definitionJson: String? = null,
+    val updatedAtMillis: Long = 0,
+)
+
+@Entity(tableName = "theme_drafts")
+data class ThemeDraftEntity(
+    @PrimaryKey val id: String,
+    val schemaVersion: Int,
+    val definitionJson: String,
+    val updatedAtMillis: Long,
 )
 
 @Entity(tableName = "asset_metadata")

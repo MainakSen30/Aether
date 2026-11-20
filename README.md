@@ -104,8 +104,10 @@ Compose or Room.
 
 ## 6. Persistence boundaries
 
-- **Room** (`aether.db`, version 1, `exportSchema = true`): `theme_metadata`, `asset_metadata`,
-  `asset_references`, `asset_imports`. Schema is written to `core/data/schemas/`.
+- **Room** (`aether.db`, version 2, `exportSchema = true`): `theme_metadata` (queryable metadata plus
+  complete versioned JSON), `theme_drafts` (persistent draft definitions), `asset_metadata`,
+  `asset_references`, `asset_imports`. Schemas and the explicit `1 → 2` migration are in
+  `core/data/schemas/` and `AetherDatabase.kt`.
 - **Preferences DataStore** (`aether_settings`): active theme ID, grid columns, gesture flag, animation
   flag, appearance mode.
 - **App-private filesystem** (`filesDir/aether/`): `staging/`, `originals/`, `thumbnails/`, `cache/`,
@@ -117,12 +119,24 @@ Compose or Room.
   and explicit recovery instead of pretending to share a transaction with Room.
 - Room and DataStore do **not** share a transaction. `ThemeRepositoryImpl.activate` validates
   metadata first, then writes DataStore; `ThemeController` publishes runtime state only on success.
-- No production migration exists yet; destructive migration is not used.
+- Migration `1 → 2` adds definition columns to `theme_metadata` and creates `theme_drafts`; it is
+  additive and never drops asset tables. Destructive migration is not used.
+- `ThemeRepositoryImpl.seedBuiltIns()` is mutex-guarded; Room owns definition/draft transactions.
+  DataStore is written only after a definition has been read back successfully, but Room and
+  DataStore still do not share a transaction.
 
 ## 7. Theme Engine responsibilities
 
-- Distinguishes built-in definitions (`AetherThemeCatalog`), active theme (`ThemeController.active`),
-  and drafts (`saveDraft`/`preview`). A draft is published only through `activate`.
+- Distinguishes built-in definitions (`AetherThemeCatalog`), persisted definitions/drafts in Room,
+  and active theme (`ThemeController.active`). A draft is published only through `activate`.
+- Full `ThemeDefinition` objects are stored as versioned `ThemePackage` JSON, so tokens, nullable
+  overrides, presets, overrides, parent ID, origin, and format version survive process death.
+  Metadata columns duplicate only queryable fields from the same JSON blob.
+- Startup calls `ThemeController.initialize()`: seed built-ins, validate configured active theme (or
+  select Aether Black), load the persisted definition, resolve it, then publish. Failures leave the
+  runtime theme unpublished and are logged.
+- Built-in seeding is idempotent and transactional. It adds catalog definitions without duplicates,
+  refreshes existing built-in rows, and never overwrites imported/user-managed definitions or drafts.
 - `ThemeDefinition` carries a single optional `parentId`; `ThemeInheritanceValidator` detects cycles
   and missing parents and returns root-to-leaf lineage.
 - Tokens cover colors, typography, shapes, dimensions, surface treatment, component presets, and
@@ -194,22 +208,22 @@ choose Aether in Android's default-launcher dialog; the app never changes the de
 
 - The launcher screen is a placeholder; no grid, drawer, search, folders, drag-and-drop, gestures,
   widgets, control center, Studio, or settings UI.
-- Drafts are process-local; full theme token blobs are not yet persisted. Only theme metadata is in Room.
-- Built-in themes are not seeded into `theme_metadata`; `activate()` currently requires pre-existing
-  metadata, so activation is a foundation rather than an end-user flow.
 - Theme JSON import has codec + validator but no UI or storage pipeline.
+- Legacy metadata-only rows without a stored definition are reported as invalid; no tokens are
+  fabricated for them.
+- Preview is suspend-based because it reads persisted definitions; no Theme Studio UI exists yet.
 - Asset Engine now covers transactional registration, trash, restore, permanent deletion, recovery,
   and cleanup, but there is no byte-stream import UI, media processing, thumbnail generation, or
   trash/restore UI. Recovery is explicit (`AssetEngine.recover()`), not automatic at app startup.
 - Checksums are computed but not yet verified against an external manifest.
-- Room schema version 1 has no migrations yet.
+- Room schema version 2 has one additive migration from version 1.
 - Only local JVM unit tests exist; there are no instrumented/device tests in this milestone.
 - No device run was performed; HOME eligibility was verified by manifest inspection, not by changing
   the device's default launcher.
 
 ## 12. Future implementation milestones
 
-1. Seed built-in theme metadata and persist full theme definitions; add safe activation with rollback.
+1. ~~Seed built-in theme metadata and persist full theme definitions; add safe activation with rollback.~~ Completed.
 2. Seed installed-app discovery into Room (launcher intent queries are already declared) and build the
    first home-screen grid.
 3. Complete the asset import pipeline (inspection, validation, processing, thumbnails, trash restore).

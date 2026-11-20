@@ -1,6 +1,7 @@
 package dev.aether.launcher
 
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.LaunchedEffect
@@ -21,7 +22,12 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setContent {
             val resolvedTheme by themeController.active.collectAsState()
-            LaunchedEffect(Unit) { themeController.load() }
+            LaunchedEffect(Unit) {
+                val result = themeController.initialize()
+                if (result.isFailure) {
+                    Log.e("Aether", "Theme initialization failed", result.exceptionOrNull())
+                }
+            }
             AetherTheme(resolvedTheme) {
                 LauncherScreen()
             }

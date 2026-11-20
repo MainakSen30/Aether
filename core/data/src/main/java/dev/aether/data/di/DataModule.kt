@@ -10,6 +10,7 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import dev.aether.data.AetherDatabase
+import dev.aether.data.MIGRATION_1_2
 import dev.aether.data.dao.AssetDao
 import dev.aether.data.dao.ThemeMetadataDao
 import dev.aether.data.preferences.AetherPreferences
@@ -27,7 +28,9 @@ object DataModule {
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): AetherDatabase =
-        Room.databaseBuilder(context, AetherDatabase::class.java, "aether.db").build()
+        Room.databaseBuilder(context, AetherDatabase::class.java, "aether.db")
+            .addMigrations(MIGRATION_1_2)
+            .build()
 
     @Provides
     fun provideThemeMetadataDao(database: AetherDatabase): ThemeMetadataDao = database.themeMetadataDao()
