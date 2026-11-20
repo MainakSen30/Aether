@@ -301,6 +301,32 @@ class AssetEngineTest {
     }
 
     @Test
+    fun `unexpected staged path is rejected before metadata is written`() = runTest(dispatcher) {
+        val assetId = AssetId("wall.wrong-path")
+        val staged = storage.stage("imp-path", AssetCategory.WALLPAPER, "wall.png", PNG_BYTES.size.toLong())
+            .getOrThrow()
+        staged.writeBytes(PNG_BYTES)
+
+        val result = engine.register(
+            AssetRegistration(
+                importId = "imp-path",
+                assetId = assetId,
+                category = AssetCategory.WALLPAPER,
+                displayName = "Wall",
+                stagedRelativePath = "staging/other-import/wall.png",
+                extension = "png",
+                declaredByteSize = PNG_BYTES.size.toLong(),
+                ownership = AssetOwnership.USER_MANAGED,
+            ),
+        )
+
+        val error = (result.exceptionOrNull() as? AssetValidationException)?.error
+        assertTrue(error is AssetValidationError.InvalidAssetPath)
+        assertNull(repository.metadata[assetId.value])
+        assertEquals(ImportStatus.FAILED, repository.imports.values.single().status)
+    }
+
+    @Test
     fun `database failure after file deletion is recovered from pending deletion`() = runTest(dispatcher) {
         val assetId = AssetId("wall.db-delete")
         register(assetId.value)

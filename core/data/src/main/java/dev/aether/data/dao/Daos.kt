@@ -41,11 +41,15 @@ interface ThemeMetadataDao {
     @Upsert
     suspend fun upsertDraft(entity: ThemeDraftEntity)
 
+    /** One Room transaction: any failure leaves no partially seeded definitions. */
     @Transaction
-    suspend fun insertIfAbsent(entity: ThemeMetadataEntity): Boolean {
-        if (count(entity.id) != 0) return false
-        insert(entity)
-        return true
+    suspend fun seedBuiltIns(definitions: List<ThemeMetadataEntity>, builtInOrigin: String) {
+        definitions.forEach { entity ->
+            when {
+                count(entity.id) == 0 -> insert(entity)
+                get(entity.id)?.origin == builtInOrigin -> upsert(entity)
+            }
+        }
     }
 }
 

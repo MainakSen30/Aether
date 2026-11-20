@@ -60,13 +60,10 @@ class ThemeRepositoryImpl(
         runCatching {
             require(definitions.any { it.id == defaultId }) { "Default theme is not in catalog" }
             inheritance.validate(definitions).asResult().getOrThrow()
-            definitions.forEach { definition ->
-                val entity = definition.copy(origin = ThemeOrigin.BUILT_IN).toMetadataEntity()
-                if (!dao.insertIfAbsent(entity)) {
-                    val existing = dao.get(definition.id.value)
-                    if (existing?.origin == ThemeOrigin.BUILT_IN.name) dao.upsert(entity)
-                }
-            }
+            dao.seedBuiltIns(
+                definitions.map { it.copy(origin = ThemeOrigin.BUILT_IN).toMetadataEntity() },
+                ThemeOrigin.BUILT_IN.name,
+            )
         }
     }
 

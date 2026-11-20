@@ -76,6 +76,19 @@ class ThemeRepositoryImplTest {
     }
 
     @Test
+    fun `a failed seed leaves no partially written definitions`() = runTest {
+        val first = theme().copy(id = ThemeId("seed.first"), name = "First")
+        val second = theme().copy(id = ThemeId("seed.second"), name = "Second")
+        dao.failSeedAt = 2
+
+        val result = repository.seedBuiltIns(listOf(first, second), first.id)
+
+        assertTrue(result.isFailure)
+        assertTrue(dao.entities.isEmpty())
+        assertNull(preferences.current.activeThemeId)
+    }
+
+    @Test
     fun `seeding is idempotent and preserves user managed definitions`() = runTest {
         val builtIn = AetherThemeCatalog.AETHER_BLACK
         val customized = builtIn.copy(id = ThemeId("user.black"), origin = ThemeOrigin.IMPORTED)
@@ -201,6 +214,7 @@ class ThemeRepositoryImplTest {
 private class FakeThemeMetadataDao : ThemeMetadataDao {
     val entities = mutableMapOf<String, ThemeMetadataEntity>()
     val drafts = mutableMapOf<String, ThemeDraftEntity>()
+    var failSeedAt: Int? = null
 
     override fun observeAll(): Flow<List<ThemeMetadataEntity>> = MutableStateFlow(entities.values.toList())
     override suspend fun getAll(): List<ThemeMetadataEntity> = entities.values.toList()
@@ -217,7 +231,21 @@ private class FakeThemeMetadataDao : ThemeMetadataDao {
     override suspend fun upsertDraft(entity: ThemeDraftEntity) {
         drafts[entity.id] = entity
     }
-
+    override suspend fun seedBuiltIns(
+        definitions: List<ThemeMetadataEntity>,
+        builtInOrigin: String,
+    ) {
+        val committed = LinkedHashMap(entities)
+        definitions.forEachIndexed { index, entity ->
+            if (index + 1 == failSeedAt) throw IllegalStateException("seed interrupted")
+            when {
+                entity.id !in committed -> committed[entity.id] = entity
+                committed[entity.id]?.origin == builtInOrigin -> committed[entity.id] = entity
+            }
+        }
+        entities.clear()
+        entities.putAll(committed)
+    }
 }
 
 private class FakePreferencesRepository : PreferencesRepository {

@@ -124,7 +124,7 @@ Compose or Room.
   published as a fallback.
 - Migration `1 → 2` adds definition columns to `theme_metadata` and creates `theme_drafts`; it is
   additive and never drops asset tables. Destructive migration is not used.
-- `ThemeRepositoryImpl.seedBuiltIns()` is mutex-guarded; Room owns definition/draft transactions.
+- `ThemeRepositoryImpl.seedBuiltIns()` is mutex-guarded and calls a single Room `@Transaction`; any failure leaves no partial catalog. Room and DataStore remain separate systems with no shared transaction.
   DataStore is written only after a definition has been read back successfully, but Room and
   DataStore still do not share a transaction.
 
@@ -170,10 +170,10 @@ Compose or Room.
   unsupported extensions, and sizes above 128 MiB; canonical path and parent-directory checks stop
   symlink escapes. Moves never overwrite an occupied target.
 - `AssetValidator` runs before any registration DB write. It checks actual staged size, declared-vs-
-  actual size, category/extension/signature, PNG/JPEG/WebP headers and bounded dimensions, sfnt font
-  headers and table records, UTF-8/NUL/JSON constraints for text, canonical paths, and streaming
-  SHA-256. Invalid registration produces `AssetValidationError`, leaves no orphaned metadata, and
-  records a `FAILED` import.
+  actual size, category/extension/signature, the declared `staging/<importId>/` path, PNG/JPEG/WebP
+  headers, bounded dimensions and WebP chunk lengths, sfnt font headers and table records, UTF-8/NUL/
+  JSON constraints for text, canonical paths, and streaming SHA-256. Invalid registration produces
+  `AssetValidationError`, leaves no orphaned metadata, and records a `FAILED` import.
 - SVG is rejected until a narrowly scoped sanitizer/safe renderer exists; there is no WebView or
   browser execution path for assets. Image validation is header-level and does not fully decode files.
 - Explicit states are `STAGED`, `REGISTERED`, `PENDING_TRASH`, `TRASHED`, `PENDING_RESTORE`, and

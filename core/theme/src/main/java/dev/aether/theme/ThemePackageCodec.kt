@@ -57,7 +57,11 @@ object ThemePackageCodec {
                     var next = index + 1
                     while (next < raw.length && raw[next].isWhitespace()) next++
                     if (next < raw.length && raw[next] == ':') {
-                        val key = raw.substring(stringStart, index)
+                        val key = runCatching {
+                            json.decodeFromString<String>(raw.substring(stringStart - 1, index + 1))
+                        }.getOrElse {
+                            throw ThemeValidationException(ThemeValidationError.MalformedJson("invalid object key"))
+                        }
                         val keys = keysAtDepth.lastOrNull()
                             ?: throw ThemeValidationException(ThemeValidationError.MalformedJson("key outside object"))
                         if (!keys.add(key)) {

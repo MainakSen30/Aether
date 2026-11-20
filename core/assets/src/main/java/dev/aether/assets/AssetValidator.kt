@@ -28,28 +28,7 @@ object AssetValidator {
 
     fun validate(registration: AssetRegistration, file: File): Result<AssetInspection> = runCatching {
         validateMetadata(registration)
-
-        val actualSize = file.length()
-        if (actualSize <= 0L) throw AssetValidationException(AssetValidationError.EmptyAsset)
-        if (actualSize > AssetPaths.MAX_ASSET_BYTES) {
-            throw AssetValidationException(
-                AssetValidationError.AssetTooLarge(actualSize, AssetPaths.MAX_ASSET_BYTES),
-            )
-        }
-        if (registration.declaredByteSize <= 0L) throw AssetValidationException(AssetValidationError.EmptyAsset)
-        if (registration.declaredByteSize > AssetPaths.MAX_ASSET_BYTES) {
-            throw AssetValidationException(
-                AssetValidationError.AssetTooLarge(registration.declaredByteSize, AssetPaths.MAX_ASSET_BYTES),
-            )
-        }
-        if (registration.declaredByteSize != actualSize) {
-            throw AssetValidationException(
-                AssetValidationError.SizeMismatch(registration.declaredByteSize, actualSize),
-            )
-        }
-
-        validateContent(registration.category, registration.extension, file)
-        AssetInspection(actualSize, checksum(file))
+        inspect(registration.category, registration.extension, registration.declaredByteSize, file)
     }
 
     fun verifyIntegrity(metadata: AssetMetadata, file: File): Result<Unit> = runCatching {
@@ -59,19 +38,7 @@ object AssetValidator {
             )
         }
         val extension = AssetPaths.extensionOf(metadata.relativePath).getOrThrow()
-        val inspection = validate(
-            AssetRegistration(
-                importId = "integrity-check",
-                assetId = metadata.id,
-                category = metadata.category,
-                displayName = metadata.displayName,
-                stagedRelativePath = metadata.relativePath,
-                extension = extension,
-                ownership = metadata.ownership,
-                declaredByteSize = metadata.byteSize,
-            ),
-            file,
-        ).getOrThrow()
+        val inspection = inspect(metadata.category, extension, metadata.byteSize, file)
         if (inspection.byteSize != metadata.byteSize) {
             throw AssetValidationException(
                 AssetValidationError.AssetIntegrityFailure(metadata.id.value, "file size changed"),
@@ -80,6 +47,32 @@ object AssetValidator {
         if (inspection.checksumSha256 != metadata.checksumSha256) {
             throw AssetValidationException(AssetValidationError.ChecksumMismatch(metadata.id.value))
         }
+    }
+
+    private fun inspect(
+        category: dev.aether.model.AssetCategory,
+        extension: String,
+        declaredByteSize: Long,
+        file: File,
+    ): AssetInspection {
+        val actualSize = file.length()
+        if (actualSize <= 0L) throw AssetValidationException(AssetValidationError.EmptyAsset)
+        if (actualSize > AssetPaths.MAX_ASSET_BYTES) {
+            throw AssetValidationException(
+                AssetValidationError.AssetTooLarge(actualSize, AssetPaths.MAX_ASSET_BYTES),
+            )
+        }
+        if (declaredByteSize <= 0L) throw AssetValidationException(AssetValidationError.EmptyAsset)
+        if (declaredByteSize > AssetPaths.MAX_ASSET_BYTES) {
+            throw AssetValidationException(
+                AssetValidationError.AssetTooLarge(declaredByteSize, AssetPaths.MAX_ASSET_BYTES),
+            )
+        }
+        if (declaredByteSize != actualSize) {
+            throw AssetValidationException(AssetValidationError.SizeMismatch(declaredByteSize, actualSize))
+        }
+        validateContent(category, extension, file)
+        return AssetInspection(actualSize, checksum(file))
     }
 
     fun checksum(file: File): String {
@@ -96,16 +89,22 @@ object AssetValidator {
     }
 
     private fun validateMetadata(registration: AssetRegistration) {
-        AssetPaths.safeSegment(registration.importId).getOrThrow()
+        val importId = AssetPaths.safeSegment(registration.importId).getOrThrow()
         AssetPaths.safeSegment(registration.assetId.value).getOrThrow()
         if (registration.displayName.isBlank() || registration.displayName.length > 128) {
             throw AssetValidationException(AssetValidationError.InvalidMetadata("display name is blank or too long"))
         }
         val path = registration.stagedRelativePath
-        if (path.isBlank() || File(path).isAbsolute || path.contains('\\')) {
+        val prefix = "staging/$importId/"
+        if (!path.startsWith(prefix)) {
             throw AssetValidationException(AssetValidationError.InvalidAssetPath(path))
         }
-        path.split('/').forEach { AssetPaths.safeSegment(it).getOrThrow() }
+        val fileName = path.removePrefix(prefix)
+        val safeName = AssetPaths.safeFileName(registration.category, fileName).getOrThrow()
+        val extension = AssetPaths.safeSegment(registration.extension.lowercase()).getOrThrow()
+        if (safeName.substringAfterLast('.') != extension) {
+            throw AssetValidationException(AssetValidationError.InvalidAssetPath(path))
+        }
     }
 
     private fun validateContent(category: dev.aether.model.AssetCategory, extension: String, file: File) {
@@ -131,7 +130,7 @@ object AssetValidator {
             val dimensions = when (extension) {
                 "png" -> pngDimensions(input)
                 "jpg", "jpeg" -> jpegDimensions(input)
-                "webp" -> webpDimensions(input)
+                "webp" -> webpDimensions(input, file.length())
                 else -> throw AssetValidationException(
                     AssetValidationError.UnsupportedAssetType("IMAGE", extension),
                 )
@@ -184,55 +183,78 @@ object AssetValidator {
         throw AssetValidationException(AssetValidationError.InvalidFileSignature("jpg", "no frame header"))
     }
 
-    private fun webpDimensions(input: DataInputStream): Pair<Int, Int> {
+    private fun webpDimensions(input: DataInputStream, fileLength: Long): Pair<Int, Int> {
         val riff = readExact(input, 4, "WebP")
+        readExact(input, 4, "WebP") // RIFF size
         val webp = readExact(input, 4, "WebP")
-        readExact(input, 4, "WebP")
         if (String(riff, StandardCharsets.US_ASCII) != "RIFF" ||
             String(webp, StandardCharsets.US_ASCII) != "WEBP"
         ) {
             throw AssetValidationException(AssetValidationError.InvalidFileSignature("webp", "bad RIFF header"))
         }
-        var scanned = 0
-        while (scanned < MAX_HEADER_SCAN_BYTES) {
+        var consumed = 12L
+        while (consumed < MAX_HEADER_SCAN_BYTES && consumed + 8 <= fileLength) {
             val chunkId = String(readExact(input, 4, "WebP"), StandardCharsets.US_ASCII)
-            val size = littleEndianInt(readExact(input, 4, "WebP"))
-            scanned += 8
+            val chunkSize = littleEndianInt(readExact(input, 4, "WebP")).toLong() and 0xffffffffL
+            consumed += 8
             when (chunkId) {
                 "VP8X" -> {
+                    val trailing = chunkTail(chunkSize, 10, consumed, fileLength)
                     val data = readExact(input, 10, "WebP")
+                    skipFully(input, trailing.toInt())
                     return littleEndian24(data, 4) + 1 to littleEndian24(data, 7) + 1
                 }
 
                 "VP8 " -> {
+                    val trailing = chunkTail(chunkSize, 10, consumed, fileLength)
                     val data = readExact(input, 10, "WebP")
                     if (data[3] != 0x9D.toByte() || data[4] != 0x01.toByte() || data[5] != 0x2A.toByte()) {
                         throw AssetValidationException(
                             AssetValidationError.InvalidFileSignature("webp", "bad VP8 frame"),
                         )
                     }
+                    skipFully(input, trailing.toInt())
                     return (bigEndian16(data, 6) and 0x3FFF) to (bigEndian16(data, 8) and 0x3FFF)
                 }
 
                 "VP8L" -> {
+                    val trailing = chunkTail(chunkSize, 5, consumed, fileLength)
                     val data = readExact(input, 5, "WebP")
                     if (data[0] != 0x2F.toByte()) {
                         throw AssetValidationException(
                             AssetValidationError.InvalidFileSignature("webp", "bad VP8L frame"),
                         )
                     }
+                    skipFully(input, trailing.toInt())
                     val bits = littleEndianInt(data, 1)
                     return (bits and 0x3FFF) + 1 to ((bits shr 14) and 0x3FFF) + 1
                 }
 
                 else -> {
-                    val padded = size + (size and 1)
-                    skipFully(input, padded)
-                    scanned += padded
+                    val padded = chunkTail(chunkSize, 0, consumed, fileLength)
+                    skipFully(input, padded.toInt())
+                    consumed += padded
                 }
             }
         }
         throw AssetValidationException(AssetValidationError.InvalidFileSignature("webp", "no image chunk"))
+    }
+
+    /** Returns the bytes after a known header; rejects signed/oversized or truncated WebP chunks. */
+    private fun chunkTail(
+        chunkSize: Long,
+        headerBytes: Int,
+        consumedHeaderBytes: Long,
+        fileLength: Long,
+    ): Long {
+        val padded = chunkSize + (chunkSize and 1L)
+        if (chunkSize < headerBytes ||
+            padded > Int.MAX_VALUE ||
+            consumedHeaderBytes + padded > fileLength
+        ) {
+            throw AssetValidationException(AssetValidationError.InvalidFileSignature("webp", "bad chunk length"))
+        }
+        return padded - headerBytes
     }
 
     private fun validateFont(extension: String, file: File) {

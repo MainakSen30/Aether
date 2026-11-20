@@ -96,6 +96,45 @@ class AssetValidatorTest {
     }
 
     @Test
+    fun `validates webp chunk lengths`() {
+        val valid = staged("valid.webp", webpBytes(WebpChunk("VP8X", 10, vp8xPayload(2, 3))))
+        assertTrue(AssetValidator.validate(registration(valid, extension = "webp"), valid).isSuccess)
+
+        val negative = staged(
+            "negative.webp",
+            webpBytes(
+                WebpChunk("JUNK", -1),
+                WebpChunk("VP8X", 10, vp8xPayload(2, 3)),
+            ),
+        )
+        assertTrue(
+            error(AssetValidator.validate(registration(negative, extension = "webp"), negative))
+                is AssetValidationError.InvalidFileSignature,
+        )
+
+        val oversized = staged(
+            "oversized.webp",
+            webpBytes(
+                WebpChunk("JUNK", Int.MAX_VALUE),
+                WebpChunk("VP8X", 10, vp8xPayload(2, 3)),
+            ),
+        )
+        assertTrue(
+            error(AssetValidator.validate(registration(oversized, extension = "webp"), oversized))
+                is AssetValidationError.InvalidFileSignature,
+        )
+
+        val shortKnownChunk = staged(
+            "short.webp",
+            webpBytes(WebpChunk("VP8X", 4, vp8xPayload(2, 3))),
+        )
+        assertTrue(
+            error(AssetValidator.validate(registration(shortKnownChunk, extension = "webp"), shortKnownChunk))
+                is AssetValidationError.InvalidFileSignature,
+        )
+    }
+
+    @Test
     fun `validates font signatures and table directory`() {
         val ttf = staged("font.ttf", fontBytes("ttf"))
         assertTrue(
@@ -176,6 +215,22 @@ class AssetValidatorTest {
         assertTrue(
             error(AssetValidator.validate(registration(file, importId = "bad/id"), file))
                 is AssetValidationError.InvalidAssetPath,
+        )
+        assertTrue(
+            error(
+                AssetValidator.validate(
+                    registration(file, stagedRelativePath = "staging/other.one/wall.png"),
+                    file,
+                ),
+            ) is AssetValidationError.InvalidAssetPath,
+        )
+        assertTrue(
+            error(
+                AssetValidator.validate(
+                    registration(file, stagedRelativePath = "originals/wallpaper/asset.one.png"),
+                    file,
+                ),
+            ) is AssetValidationError.InvalidAssetPath,
         )
     }
 

@@ -82,6 +82,13 @@ class ThemePackageTest {
                 ThemePackageCodec.decode(VALID_PACKAGE.replace("\"style\": \"FLAT\"", "\"style\": \"FLAT\", \"unsafe\": true")),
             ) is ThemeValidationError.MalformedJson,
         )
+        assertTrue(
+            validationError(
+                ThemePackageCodec.decode(
+                    VALID_PACKAGE.replace("\"name\":", "\"\\u006eame\": \"Wrong\", \"name\":")
+                ),
+            ) is ThemeValidationError.MalformedJson,
+        )
     }
 
     @Test
