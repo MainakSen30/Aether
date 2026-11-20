@@ -9,7 +9,6 @@ import dev.aether.model.AssetOwnership
 import dev.aether.model.AssetState
 import dev.aether.model.ImportStatus
 import java.io.File
-import java.security.MessageDigest
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -21,6 +20,7 @@ data class AssetRegistration(
     val displayName: String,
     val stagedRelativePath: String,
     val extension: String,
+    val declaredByteSize: Long,
     val ownership: AssetOwnership,
 )
 
@@ -36,6 +36,21 @@ class AssetEngine(
 ) {
     suspend fun register(registration: AssetRegistration): Result<AssetMetadata> = withContext(io) {
         runCatching { registerAsset(registration) }
+            .onFailure { failure ->
+                if (failure is AssetValidationException) {
+                    runCatching {
+                        repository.recordImport(
+                            AssetImportRecord(
+                                importId = registration.importId,
+                                sourceName = registration.displayName,
+                                status = ImportStatus.FAILED,
+                                assetId = registration.assetId,
+                                createdAtMillis = System.currentTimeMillis(),
+                            ),
+                        )
+                    }
+                }
+            }
     }
 
     /** User-facing delete: temporary assets are erased, user assets become recoverable trash. */
@@ -99,16 +114,21 @@ class AssetEngine(
     private suspend fun registerAsset(registration: AssetRegistration): AssetMetadata {
         recoverAsset(registration.assetId)
         repository.get(registration.assetId)?.let { existing ->
-            if (existing.state == AssetState.REGISTERED &&
-                storage.resolve(existing.relativePath).getOrThrow().isFile
-            ) {
+            val existingFile = storage.resolve(existing.relativePath).getOrThrow()
+            if (existing.state == AssetState.REGISTERED && existingFile.isFile) {
+                AssetValidator.verifyIntegrity(existing, existingFile).getOrThrow()
                 return existing
             }
             error("Asset id already exists in state ${existing.state}")
         }
 
         val stagedFile = storage.resolve(registration.stagedRelativePath).getOrThrow()
-        require(stagedFile.isFile) { "Staged file is missing: ${registration.stagedRelativePath}" }
+        if (!stagedFile.isFile) {
+            throw AssetValidationException(
+                AssetValidationError.InvalidAssetPath(registration.stagedRelativePath),
+            )
+        }
+        val inspection = AssetValidator.validate(registration, stagedFile).getOrThrow()
         val originalPath = storage.relativeOriginalPath(
             registration.assetId,
             registration.category,
@@ -124,8 +144,8 @@ class AssetEngine(
             category = registration.category,
             displayName = registration.displayName,
             relativePath = originalPath,
-            byteSize = stagedFile.length(),
-            checksumSha256 = checksum(stagedFile),
+            byteSize = inspection.byteSize,
+            checksumSha256 = inspection.checksumSha256,
             state = AssetState.STAGED,
             ownership = registration.ownership,
             createdAtMillis = now,
@@ -249,13 +269,18 @@ class AssetEngine(
         when (metadata.state) {
             AssetState.STAGED -> {
                 if (currentFile?.isFile == true) {
+                    AssetValidator.verifyIntegrity(metadata, currentFile).getOrThrow()
                     repository.update(metadata.copy(state = AssetState.REGISTERED), ImportStatus.REGISTERED)
                 } else {
                     discardMissingAsset(metadata)
                 }
             }
             AssetState.REGISTERED -> {
-                if (currentFile?.isFile != true) discardMissingAsset(metadata)
+                if (currentFile?.isFile != true) {
+                    discardMissingAsset(metadata)
+                } else {
+                    AssetValidator.verifyIntegrity(metadata, currentFile).getOrThrow()
+                }
             }
             AssetState.PENDING_TRASH -> recoverPendingTrash(metadata, currentFile)
             AssetState.TRASHED -> {
@@ -318,19 +343,6 @@ class AssetEngine(
             "Asset path has no extension: $relativePath"
         }
         return name.substringAfterLast('.')
-    }
-
-    private fun checksum(file: File): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        file.inputStream().use { input ->
-            val buffer = ByteArray(8192)
-            while (true) {
-                val read = input.read(buffer)
-                if (read < 0) break
-                digest.update(buffer, 0, read)
-            }
-        }
-        return digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
     }
 
     private fun Result<*>.addSuppressed(failure: Throwable) {

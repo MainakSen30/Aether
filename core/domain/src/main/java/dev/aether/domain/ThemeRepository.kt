@@ -11,8 +11,8 @@ interface ThemeRepository {
     suspend fun getMetadata(id: ThemeId): ThemeMetadata?
     suspend fun getDefinition(id: ThemeId): ThemeDefinition?
     suspend fun getDefinitions(): List<ThemeDefinition>
-    suspend fun saveDefinition(theme: ThemeDefinition)
-    suspend fun saveDraft(theme: ThemeDefinition)
+    suspend fun saveDefinition(theme: ThemeDefinition): Result<Unit>
+    suspend fun saveDraft(theme: ThemeDefinition): Result<Unit>
     suspend fun getDraft(id: ThemeId): ThemeDefinition?
     suspend fun seedBuiltIns(definitions: List<ThemeDefinition>, defaultId: ThemeId): Result<Unit>
     suspend fun initialize(defaultId: ThemeId): Result<Unit>

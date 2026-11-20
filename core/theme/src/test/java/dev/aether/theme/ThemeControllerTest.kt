@@ -58,6 +58,18 @@ class ThemeControllerTest {
         assertTrue(controller.initialize().isFailure)
         assertNull(controller.active.value)
     }
+
+    @Test
+    fun `failed activation does not publish invalid runtime state or change stored id`() = runTest {
+        controller.initialize()
+        val baseline = controller.active.value
+
+        val invalid = AetherThemeCatalog.AETHER_BLACK.copy(id = ThemeId("missing.theme"))
+        assertTrue(controller.activate(invalid.id).isFailure)
+
+        assertEquals(baseline, controller.active.value)
+        assertEquals(AetherThemeCatalog.AETHER_BLACK.id, repository.activeId.value)
+    }
 }
 
 private class FakeThemeRepository : ThemeRepository {
@@ -77,10 +89,11 @@ private class FakeThemeRepository : ThemeRepository {
     }
     override suspend fun getDefinition(id: ThemeId) = if (failDefinitions) null else definitions[id]
     override suspend fun getDefinitions() = if (failDefinitions) emptyList() else definitions.values.toList()
-    override suspend fun saveDefinition(theme: ThemeDefinition) {
+    override suspend fun saveDefinition(theme: ThemeDefinition): Result<Unit> {
         definitions[theme.id] = theme
+        return Result.success(Unit)
     }
-    override suspend fun saveDraft(theme: ThemeDefinition) = Unit
+    override suspend fun saveDraft(theme: ThemeDefinition): Result<Unit> = Result.success(Unit)
     override suspend fun getDraft(id: ThemeId): ThemeDefinition? = null
     override suspend fun seedBuiltIns(
         definitions: List<ThemeDefinition>,

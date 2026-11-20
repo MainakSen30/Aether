@@ -31,7 +31,7 @@ class ThemeResolver(private val defaults: ThemeTokens) {
     private val inheritance = ThemeInheritanceValidator()
 
     fun resolve(theme: ThemeDefinition, definitions: List<ThemeDefinition>): ResolvedTheme {
-        val lineage = inheritance.lineage(theme.id, definitions + theme).getOrThrow()
+        val lineage = inheritance.lineage(theme.id, definitions.withTheme(theme)).getOrThrow()
         val presets = linkedMapOf<String, String>()
         val overrides = linkedMapOf<String, ComponentOverride>()
         lineage.forEach {

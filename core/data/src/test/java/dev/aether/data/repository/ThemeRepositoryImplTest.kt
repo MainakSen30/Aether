@@ -117,8 +117,8 @@ class ThemeRepositoryImplTest {
         assertEquals(other.id, preferences.current.activeThemeId)
 
         preferences.state.value = preferences.current.copy(activeThemeId = ThemeId("missing"))
-        repository.initialize(AetherThemeCatalog.AETHER_BLACK.id).getOrThrow()
-        assertEquals(AetherThemeCatalog.AETHER_BLACK.id, preferences.current.activeThemeId)
+        assertTrue(repository.initialize(AetherThemeCatalog.AETHER_BLACK.id).isFailure)
+        assertEquals(ThemeId("missing"), preferences.current.activeThemeId)
     }
 
     @Test
@@ -141,10 +141,52 @@ class ThemeRepositoryImplTest {
         assertEquals(theme.id, preferences.current.activeThemeId)
     }
 
+    @Test
+    fun `invalid definitions and drafts are not persisted`() = runTest {
+        assertTrue(repository.saveDefinition(theme().copy(name = " ")).isFailure)
+        assertTrue(repository.saveDraft(theme().copy(name = " ")).isFailure)
+        assertTrue(dao.entities.isEmpty())
+        assertTrue(dao.drafts.isEmpty())
+    }
+
+    @Test
+    fun `a colliding draft never changes the persisted active definition`() = runTest {
+        val builtIn = AetherThemeCatalog.AETHER_BLACK
+        repository.seedBuiltIns(listOf(builtIn), builtIn.id).getOrThrow()
+        repository.saveDraft(builtIn.copy(name = "Black Draft")).getOrThrow()
+
+        assertEquals(builtIn, repository.getDefinition(builtIn.id))
+        assertTrue(repository.activate(builtIn.id).isSuccess)
+        assertEquals(builtIn.id, preferences.current.activeThemeId)
+        assertEquals(builtIn.name, repository.getDefinition(builtIn.id)?.name)
+    }
+
+    @Test
+    fun `an invalid persisted ancestor blocks activation of a valid child`() = runTest {
+        val parent = theme().copy(id = ThemeId("parent.valid"))
+        val child = theme().copy(id = ThemeId("child.valid"), parentId = parent.id)
+        repository.saveDefinition(parent).getOrThrow()
+        repository.saveDefinition(child).getOrThrow()
+        val parentEntity = dao.entities.getValue(parent.id.value)
+        dao.entities[parent.id.value] = parentEntity.copy(definitionJson = """{"unsafe":true}""")
+
+        assertTrue(repository.activate(child.id).isFailure)
+        assertNull(preferences.current.activeThemeId)
+    }
+
+    @Test
+    fun `activation of a draft only theme is rejected`() = runTest {
+        val draft = theme().copy(id = ThemeId("draft.only"), origin = ThemeOrigin.DRAFT)
+        repository.saveDraft(draft).getOrThrow()
+
+        assertTrue(repository.activate(draft.id).isFailure)
+        assertNull(preferences.current.activeThemeId)
+    }
+
     private fun theme() = ThemeDefinition(
         id = ThemeId("theme.one"),
         name = "Theme One",
-        parentId = ThemeId("theme.parent"),
+        parentId = null,
         tokens = ThemeTokens(
             colors = AetherColors(background = 0xFF050505, foreground = null),
             typography = AetherTypography(40f, 18f, 14f, 0f),
@@ -175,6 +217,7 @@ private class FakeThemeMetadataDao : ThemeMetadataDao {
     override suspend fun upsertDraft(entity: ThemeDraftEntity) {
         drafts[entity.id] = entity
     }
+
 }
 
 private class FakePreferencesRepository : PreferencesRepository {

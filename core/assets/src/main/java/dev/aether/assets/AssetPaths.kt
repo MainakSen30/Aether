@@ -13,43 +13,63 @@ object AssetPaths {
 
     private val ALLOWED_EXTENSIONS = mapOf(
         AssetCategory.WALLPAPER to setOf("jpg", "jpeg", "png", "webp"),
-        AssetCategory.ICON to setOf("png", "webp", "svg"),
+        AssetCategory.ICON to setOf("png", "webp"),
         AssetCategory.THEME_IMAGE to setOf("jpg", "jpeg", "png", "webp"),
         AssetCategory.FONT to setOf("ttf", "otf"),
         AssetCategory.THUMBNAIL to setOf("jpg", "jpeg", "png", "webp"),
         AssetCategory.OTHER to setOf("txt", "json"),
     )
 
+    fun allowedExtensions(category: AssetCategory): Set<String> = ALLOWED_EXTENSIONS.getValue(category)
+
+    fun requiresContent(category: AssetCategory): Boolean = true
+
     fun safeFileName(category: AssetCategory, fileName: String): Result<String> = runCatching {
-        require(fileName.length <= 128 && !fileName.contains('/') && !fileName.contains('\\')) {
-            "Unsafe file name: $fileName"
+        if (fileName.length > 128 || fileName.contains('/') || fileName.contains('\\')) {
+            throw AssetValidationException(AssetValidationError.InvalidAssetPath(fileName))
         }
         val extension = fileName.substringAfterLast('.', "").lowercase()
-        require(extension in ALLOWED_EXTENSIONS.getValue(category)) {
-            "Unsupported file type for $category: $extension"
+        if (extension == "svg") throw AssetValidationException(AssetValidationError.UnsafeSvg)
+        if (extension !in allowedExtensions(category)) {
+            throw AssetValidationException(AssetValidationError.UnsupportedAssetType(category.name, extension))
         }
         val stem = fileName.substringBeforeLast('.')
-        require(SAFE_SEGMENT.matches(stem)) { "Unsafe file name: $fileName" }
+        if (!SAFE_SEGMENT.matches(stem)) {
+            throw AssetValidationException(AssetValidationError.InvalidAssetPath(fileName))
+        }
         "$stem.$extension"
     }
 
     fun safeSegment(value: String): Result<String> = runCatching {
-        require(SAFE_SEGMENT.matches(value)) { "Unsafe path segment: $value" }
+        if (!SAFE_SEGMENT.matches(value)) {
+            throw AssetValidationException(AssetValidationError.InvalidAssetPath(value))
+        }
         value
     }
 
     /** Resolves an app-relative path and proves it stays under [root], including through symlinks. */
     fun resolve(root: File, relativePath: String): Result<File> = runCatching {
-        require(relativePath.isNotBlank() && !File(relativePath).isAbsolute) {
-            "Path must be relative: $relativePath"
+        if (relativePath.isBlank() || File(relativePath).isAbsolute || relativePath.contains('\\')) {
+            throw AssetValidationException(AssetValidationError.InvalidAssetPath(relativePath))
         }
-        require(relativePath.split('/', '\\').none { it == ".." || it == "." }) {
-            "Path traversal is not allowed: $relativePath"
+        val segments = relativePath.split('/')
+        if (segments.any { it.isEmpty() || it == "." || it == ".." || !SAFE_SEGMENT.matches(it) }) {
+            throw AssetValidationException(AssetValidationError.InvalidAssetPath(relativePath))
         }
         val base = root.canonicalFile.toPath()
         val candidate = File(root, relativePath).canonicalFile.toPath()
-        require(candidate.startsWith(base)) { "Path escapes asset root: $relativePath" }
+        if (!candidate.startsWith(base)) {
+            throw AssetValidationException(AssetValidationError.InvalidAssetPath(relativePath))
+        }
         candidate.toFile()
+    }
+
+    fun extensionOf(relativePath: String): Result<String> = runCatching {
+        val name = relativePath.substringAfterLast('/')
+        if (!name.contains('.') || name.endsWith('.')) {
+            throw AssetValidationException(AssetValidationError.InvalidAssetPath(relativePath))
+        }
+        safeSegment(name.substringAfterLast('.').lowercase()).getOrThrow()
     }
 
     fun originalRelativePath(assetId: String, category: AssetCategory, extension: String): Result<String> =
@@ -72,7 +92,9 @@ object AssetPaths {
     ): Result<String> = runCatching {
         val name = trashRelativePath.substringAfterLast('/')
         val safeId = safeSegment(assetId).getOrThrow()
-        require(name.startsWith("$safeId.")) { "Trash path does not match asset: $trashRelativePath" }
+        if (!name.startsWith("$safeId.")) {
+            throw AssetValidationException(AssetValidationError.InvalidAssetPath(trashRelativePath))
+        }
         val extension = safeSegment(name.substringAfterLast('.')).getOrThrow()
         originalRelativePath(safeId, category, extension).getOrThrow()
     }

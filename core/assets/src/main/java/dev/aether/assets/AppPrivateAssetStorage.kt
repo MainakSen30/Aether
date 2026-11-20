@@ -17,12 +17,15 @@ class AppPrivateAssetStorage(private val root: File) : AssetStorage {
         fileName: String,
         byteSize: Long,
     ): Result<File> = runCatching {
-        require(byteSize in 0..AssetPaths.MAX_ASSET_BYTES) { "Asset size out of bounds: $byteSize" }
+        if (byteSize <= 0) throw AssetValidationException(AssetValidationError.EmptyAsset)
+        if (byteSize > AssetPaths.MAX_ASSET_BYTES) {
+            throw AssetValidationException(
+                AssetValidationError.AssetTooLarge(byteSize, AssetPaths.MAX_ASSET_BYTES),
+            )
+        }
         val safeImportId = AssetPaths.safeSegment(importId).getOrThrow()
         val safeName = AssetPaths.safeFileName(category, fileName).getOrThrow()
-        resolve("staging/$safeImportId/$safeName").getOrThrow().also {
-            it.parentFile?.mkdirs()
-        }
+        resolve("staging/$safeImportId/$safeName").getOrThrow().also(::ensureParentDirectory)
     }
 
     override fun stagedRelativePath(importId: String, fileName: String): Result<String> = runCatching {
@@ -56,7 +59,9 @@ class AppPrivateAssetStorage(private val root: File) : AssetStorage {
         move(stagedRelativePath, originalRelativePath)
 
     override fun moveToTrash(relativePath: String): Result<File> = runCatching {
-        val (assetId, extension) = parseOriginalPath(relativePath)
+        val extension = AssetPaths.extensionOf(relativePath).getOrThrow()
+        val assetId = AssetPaths.safeSegment(relativePath.substringAfterLast('/').substringBeforeLast('.'))
+            .getOrThrow()
         move(relativePath, AssetPaths.trashRelativePath(assetId, extension).getOrThrow()).getOrThrow()
     }
 
@@ -64,8 +69,10 @@ class AppPrivateAssetStorage(private val root: File) : AssetStorage {
         val source = resolve(sourceRelativePath).getOrThrow()
         require(source.isFile) { "Source file is missing: $sourceRelativePath" }
         val target = resolve(targetRelativePath).getOrThrow()
-        require(!target.exists()) { "Target already exists: $targetRelativePath" }
-        target.parentFile?.mkdirs()
+        require(!target.exists() && !Files.isSymbolicLink(target.toPath())) {
+            "Target already exists: $targetRelativePath"
+        }
+        ensureParentDirectory(target)
         Files.move(source.toPath(), target.toPath()).toFile()
     }
 
@@ -93,15 +100,17 @@ class AppPrivateAssetStorage(private val root: File) : AssetStorage {
         resolve("cache").getOrNull()?.listFiles()?.forEach { it.deleteRecursively() }
     }
 
-    private fun parseOriginalPath(relativePath: String): Pair<String, String> {
-        val parts = relativePath.split('/')
-        require(parts.size == 3 && parts.first() == "originals") {
-            "Not an original asset path: $relativePath"
+    private fun ensureParentDirectory(file: File) {
+        val parent = file.parentFile ?: throw AssetValidationException(
+            AssetValidationError.InvalidAssetPath(file.path),
+        )
+        if (!parent.exists() && !parent.mkdirs()) {
+            throw AssetValidationException(AssetValidationError.InvalidAssetPath(parent.path))
         }
-        val fileName = parts.last()
-        require(fileName.contains('.')) { "Original path has no extension: $relativePath" }
-        val assetId = AssetPaths.safeSegment(fileName.substringBeforeLast('.')).getOrThrow()
-        val extension = AssetPaths.safeSegment(fileName.substringAfterLast('.')).getOrThrow()
-        return assetId to extension
+        val canonicalParent = parent.canonicalFile
+        val canonicalRoot = root.canonicalFile
+        if (!canonicalParent.toPath().startsWith(canonicalRoot.toPath()) || !canonicalParent.isDirectory) {
+            throw AssetValidationException(AssetValidationError.InvalidAssetPath(parent.path))
+        }
     }
 }

@@ -9,6 +9,7 @@ import dev.aether.model.theme.SurfaceStyle
 import dev.aether.model.theme.SurfaceTreatment
 import dev.aether.model.theme.ThemeDefinition
 import dev.aether.model.theme.ThemeTokens
+import dev.aether.theme.ThemeValidationException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -68,7 +69,7 @@ class ThemeInheritanceTest {
         val override = base.copy(
             tokens = base.tokens.copy(
                 componentOverrides = mapOf(
-                    "widget" to dev.aether.model.theme.ComponentOverride(
+                    "button" to dev.aether.model.theme.ComponentOverride(
                         colors = dev.aether.model.theme.AetherColorOverrides(background = 0x999999),
                     ),
                 ),
@@ -76,7 +77,40 @@ class ThemeInheritanceTest {
         )
         val resolver = ThemeResolver(tokens(AetherColors()))
         val resolved = resolver.resolve(override, listOf(base))
-        assertEquals(0x999999L, resolver.color(resolved, ColorKey.BACKGROUND, "widget"))
+        assertEquals(0x999999L, resolver.color(resolved, ColorKey.BACKGROUND, "button"))
         assertEquals(0x111111L, resolver.color(resolved, ColorKey.BACKGROUND))
+    }
+
+    @Test
+    fun `rejects self inheritance and longer cycles`() {
+        assertTrue(validator.validate(listOf(theme("self", "self"))) is InheritanceValidation.InvalidTheme)
+        val cycle = listOf(theme("a", "b"), theme("b", "c"), theme("c", "a"))
+        assertTrue(validator.validate(cycle) is InheritanceValidation.Cycle)
+    }
+
+    @Test
+    fun `rejects duplicate theme ids`() {
+        val result = validator.validate(listOf(theme("same"), theme("same")))
+        assertTrue(result is InheritanceValidation.DuplicateThemeId)
+        assertEquals("same", (result as InheritanceValidation.DuplicateThemeId).themeId.value)
+    }
+
+    @Test
+    fun `rejects an invalid ancestor in an otherwise valid chain`() {
+        val invalidParent = theme("parent").copy(
+            tokens = theme("parent").tokens.copy(
+                typography = theme("parent").tokens.typography.copy(displaySizeSp = Float.NaN),
+            ),
+        )
+        val result = validator.validate(listOf(invalidParent, theme("child", "parent")))
+        assertTrue(result is InheritanceValidation.InvalidTheme)
+        assertEquals("parent", (result as InheritanceValidation.InvalidTheme).themeId.value)
+    }
+
+    @Test
+    fun `resolution refuses an invalid inheritance graph`() {
+        val resolver = ThemeResolver(tokens(AetherColors()))
+        val result = runCatching { resolver.resolve(theme("child", "missing"), emptyList()) }
+        assertTrue(result.exceptionOrNull() is ThemeValidationException)
     }
 }

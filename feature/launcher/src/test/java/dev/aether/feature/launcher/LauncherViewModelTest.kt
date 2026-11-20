@@ -61,10 +61,11 @@ private class FakeThemeRepository : ThemeRepository {
     override suspend fun getMetadata(id: ThemeId): ThemeMetadata? = null
     override suspend fun getDefinition(id: ThemeId): ThemeDefinition? = definitions[id]
     override suspend fun getDefinitions(): List<ThemeDefinition> = definitions.values.toList()
-    override suspend fun saveDefinition(theme: ThemeDefinition) {
+    override suspend fun saveDefinition(theme: ThemeDefinition): Result<Unit> {
         definitions[theme.id] = theme
+        return Result.success(Unit)
     }
-    override suspend fun saveDraft(theme: ThemeDefinition) = Unit
+    override suspend fun saveDraft(theme: ThemeDefinition): Result<Unit> = Result.success(Unit)
     override suspend fun getDraft(id: ThemeId): ThemeDefinition? = null
     override suspend fun seedBuiltIns(
         definitions: List<ThemeDefinition>,

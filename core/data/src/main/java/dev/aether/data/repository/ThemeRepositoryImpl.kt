@@ -10,8 +10,12 @@ import dev.aether.model.theme.ThemeDefinition
 import dev.aether.model.theme.ThemeMetadata
 import dev.aether.model.theme.ThemeOrigin
 import dev.aether.model.theme.ThemePackage
+import dev.aether.theme.ThemeInheritanceValidator
 import dev.aether.theme.ThemePackageCodec
-import dev.aether.theme.ThemePackageValidator
+import dev.aether.theme.ThemeValidationError
+import dev.aether.theme.ThemeValidationException
+import dev.aether.theme.asResult
+import dev.aether.theme.withTheme
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -23,6 +27,7 @@ class ThemeRepositoryImpl(
     private val preferences: PreferencesRepository,
 ) : ThemeRepository {
     private val mutex = Mutex()
+    private val inheritance = ThemeInheritanceValidator()
 
     override fun observeActiveThemeId(): Flow<ThemeId?> = preferences.settings.map { it.activeThemeId }
 
@@ -31,22 +36,22 @@ class ThemeRepositoryImpl(
 
     override suspend fun getMetadata(id: ThemeId): ThemeMetadata? = dao.get(id.value)?.toDomain()
 
-    override suspend fun getDefinition(id: ThemeId): ThemeDefinition? =
-        dao.get(id.value)?.let(::decode)
+    override suspend fun getDefinition(id: ThemeId): ThemeDefinition? = dao.get(id.value)?.let(::decode)
 
-    override suspend fun getDefinitions(): List<ThemeDefinition> =
-        dao.getAll().mapNotNull(::decode) + dao.getDrafts().mapNotNull(::decode)
+    /** Drafts are preview-only and never participate in active-theme inheritance. */
+    override suspend fun getDefinitions(): List<ThemeDefinition> = dao.getAll().mapNotNull(::decode)
 
-    override suspend fun saveDefinition(theme: ThemeDefinition) {
+    override suspend fun saveDefinition(theme: ThemeDefinition): Result<Unit> = runCatching {
+        validateGraph(theme, getDefinitions()).getOrThrow()
         dao.upsert(theme.toMetadataEntity())
     }
 
-    override suspend fun saveDraft(theme: ThemeDefinition) {
+    override suspend fun saveDraft(theme: ThemeDefinition): Result<Unit> = runCatching {
+        validateGraph(theme, getDefinitions()).getOrThrow()
         dao.upsertDraft(theme.toDraftEntity())
     }
 
-    override suspend fun getDraft(id: ThemeId): ThemeDefinition? =
-        dao.getDraft(id.value)?.let(::decode)
+    override suspend fun getDraft(id: ThemeId): ThemeDefinition? = dao.getDraft(id.value)?.let(::decode)
 
     override suspend fun seedBuiltIns(
         definitions: List<ThemeDefinition>,
@@ -54,8 +59,8 @@ class ThemeRepositoryImpl(
     ): Result<Unit> = mutex.withLock {
         runCatching {
             require(definitions.any { it.id == defaultId }) { "Default theme is not in catalog" }
+            inheritance.validate(definitions).asResult().getOrThrow()
             definitions.forEach { definition ->
-                ThemePackageValidator.validate(ThemePackage(ThemePackage.FORMAT_VERSION, definition)).getOrThrow()
                 val entity = definition.copy(origin = ThemeOrigin.BUILT_IN).toMetadataEntity()
                 if (!dao.insertIfAbsent(entity)) {
                     val existing = dao.get(definition.id.value)
@@ -68,18 +73,27 @@ class ThemeRepositoryImpl(
     override suspend fun initialize(defaultId: ThemeId): Result<Unit> = mutex.withLock {
         runCatching {
             val configured = observeActiveThemeId().first()
-            val valid = configured?.let { getDefinition(it) != null || getDraft(it) != null } == true
-            if (!valid) {
-                require(getDefinition(defaultId) != null) { "Default theme is unavailable" }
-                preferences.update { it.copy(activeThemeId = defaultId) }
-            }
+            val activeId = configured ?: defaultId
+            val active = getDefinition(activeId)
+                ?: throw ThemeValidationException(
+                    ThemeValidationError.Inheritance("configured theme is unavailable: ${activeId.value}"),
+                )
+            validateGraph(active, getDefinitions()).getOrThrow()
+            if (configured == null) preferences.update { it.copy(activeThemeId = defaultId) }
         }
     }
 
     override suspend fun activate(id: ThemeId): Result<Unit> = runCatching {
-        require(getDefinition(id) != null || getDraft(id) != null) { "Unknown or invalid theme: ${id.value}" }
+        val theme = getDefinition(id)
+            ?: throw ThemeValidationException(
+                ThemeValidationError.Inheritance("theme is not available: ${id.value}"),
+            )
+        validateGraph(theme, getDefinitions()).getOrThrow()
         preferences.update { it.copy(activeThemeId = id) }
     }
+
+    private fun validateGraph(theme: ThemeDefinition, definitions: List<ThemeDefinition>): Result<Unit> =
+        inheritance.validateLineage(theme.id, definitions.withTheme(theme)).asResult()
 
     private fun decode(entity: ThemeMetadataEntity): ThemeDefinition? {
         val raw = entity.definitionJson ?: return null
@@ -87,6 +101,7 @@ class ThemeRepositoryImpl(
         if (definition.id.value != entity.id ||
             definition.name != entity.name ||
             definition.parentId?.value != entity.parentId ||
+            definition.schemaVersion != entity.schemaVersion ||
             definition.origin.name != entity.origin
         ) {
             return null
@@ -96,11 +111,8 @@ class ThemeRepositoryImpl(
 
     private fun decode(entity: ThemeDraftEntity): ThemeDefinition? = decode(entity.definitionJson)
 
-    private fun decode(raw: String): ThemeDefinition? {
-        val decoded = ThemePackageCodec.decode(raw).getOrNull() ?: return null
-        if (ThemePackageValidator.validate(decoded).isFailure) return null
-        return decoded.definition
-    }
+    private fun decode(raw: String): ThemeDefinition? =
+        ThemePackageCodec.decode(raw).getOrNull()?.definition
 
     private fun ThemeDefinition.toMetadataEntity() = ThemeMetadataEntity(
         id = id.value,

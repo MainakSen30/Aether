@@ -46,7 +46,7 @@ class AssetEngineTest {
         assertFalse(result.relativePath.startsWith("/"))
         assertEquals(originalPath("wall.one"), result.relativePath)
         assertEquals(
-            "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+            "b56a089a96a0c108e038c6ee3b6d8895720cbfa226b28b86beb1583425138ee5",
             result.checksumSha256,
         )
         assertEquals(AssetState.REGISTERED, result.state)
@@ -81,7 +81,11 @@ class AssetEngineTest {
         val restored = repository.metadata.getValue(assetId.value)
         assertEquals(AssetState.REGISTERED, restored.state)
         assertEquals(originalPath(assetId.value), restored.relativePath)
-        assertEquals("hello", storage.resolve(originalPath(assetId.value)).getOrThrow().readText())
+        assertTrue(
+            PNG_BYTES.contentEquals(
+                storage.resolve(originalPath(assetId.value)).getOrThrow().readBytes(),
+            ),
+        )
         assertFalse(storage.resolve(trashPath(assetId.value)).getOrThrow().exists())
 
         engine.restore(assetId).getOrThrow()
@@ -101,7 +105,11 @@ class AssetEngineTest {
 
         assertEquals(AssetState.TRASHED, repository.metadata.getValue(assetId.value).state)
         assertEquals("occupant", original.readText())
-        assertEquals("hello", storage.resolve(trashPath(assetId.value)).getOrThrow().readText())
+        assertTrue(
+            PNG_BYTES.contentEquals(
+                storage.resolve(trashPath(assetId.value)).getOrThrow().readBytes(),
+            ),
+        )
     }
 
     @Test
@@ -206,8 +214,9 @@ class AssetEngineTest {
     @Test
     fun `database failure after promotion leaves registration recoverable`() = runTest(dispatcher) {
         val assetId = AssetId("wall.db-register")
-        val staged = storage.stage("imp-db", AssetCategory.WALLPAPER, "wall.png", 5).getOrThrow()
-        staged.writeText("hello")
+        val staged = storage.stage("imp-db", AssetCategory.WALLPAPER, "wall.png", PNG_BYTES.size.toLong())
+            .getOrThrow()
+        staged.writeBytes(PNG_BYTES)
         repository.updateCalls = 0
         repository.failUpdateAt = 1
 
@@ -219,6 +228,7 @@ class AssetEngineTest {
                 displayName = "Wall",
                 stagedRelativePath = "staging/imp-db/wall.png",
                 extension = "png",
+                declaredByteSize = PNG_BYTES.size.toLong(),
                 ownership = AssetOwnership.USER_MANAGED,
             ),
         )
@@ -240,8 +250,9 @@ class AssetEngineTest {
     fun `filesystem failure during registration cleans the metadata and marks import failed`() =
         runTest(dispatcher) {
             val assetId = AssetId("wall.fs-register")
-            val staged = storage.stage("imp-fs", AssetCategory.WALLPAPER, "wall.png", 5).getOrThrow()
-            staged.writeText("hello")
+            val staged = storage.stage("imp-fs", AssetCategory.WALLPAPER, "wall.png", PNG_BYTES.size.toLong())
+                .getOrThrow()
+            staged.writeBytes(PNG_BYTES)
             storage.failMoveTimes = 1
 
             val result = engine.register(
@@ -252,6 +263,7 @@ class AssetEngineTest {
                     displayName = "Wall",
                     stagedRelativePath = "staging/imp-fs/wall.png",
                     extension = "png",
+                    declaredByteSize = PNG_BYTES.size.toLong(),
                     ownership = AssetOwnership.USER_MANAGED,
                 ),
             )
@@ -261,6 +273,32 @@ class AssetEngineTest {
             assertEquals(ImportStatus.FAILED, repository.imports.values.single().status)
             assertTrue(storage.resolve("staging/imp-fs/wall.png").getOrThrow().isFile)
         }
+
+    @Test
+    fun `invalid asset content is rejected before metadata is written`() = runTest(dispatcher) {
+        val assetId = AssetId("wall.invalid")
+        val staged = storage.stage("imp-invalid", AssetCategory.WALLPAPER, "wall.png", 5).getOrThrow()
+        staged.writeText("hello")
+
+        val result = engine.register(
+            AssetRegistration(
+                importId = "imp-invalid",
+                assetId = assetId,
+                category = AssetCategory.WALLPAPER,
+                displayName = "Wall",
+                stagedRelativePath = "staging/imp-invalid/wall.png",
+                extension = "png",
+                declaredByteSize = 5,
+                ownership = AssetOwnership.USER_MANAGED,
+            ),
+        )
+
+        val error = (result.exceptionOrNull() as? AssetValidationException)?.error
+        assertTrue(error is AssetValidationError.InvalidFileSignature)
+        assertNull(repository.metadata[assetId.value])
+        assertEquals(ImportStatus.FAILED, repository.imports.values.single().status)
+        assertTrue(staged.exists())
+    }
 
     @Test
     fun `database failure after file deletion is recovered from pending deletion`() = runTest(dispatcher) {
@@ -326,8 +364,9 @@ class AssetEngineTest {
     ): AssetMetadata {
         val assetId = AssetId(idValue)
         val importId = "imp-$idValue"
-        val staged = storage.stage(importId, AssetCategory.WALLPAPER, "wall.png", 5).getOrThrow()
-        staged.writeText("hello")
+        val staged = storage.stage(importId, AssetCategory.WALLPAPER, "wall.png", PNG_BYTES.size.toLong())
+            .getOrThrow()
+        staged.writeBytes(PNG_BYTES)
         return engine.register(
             AssetRegistration(
                 importId = importId,
@@ -336,6 +375,7 @@ class AssetEngineTest {
                 displayName = "Wall",
                 stagedRelativePath = "staging/$importId/wall.png",
                 extension = "png",
+                declaredByteSize = PNG_BYTES.size.toLong(),
                 ownership = ownership,
             ),
         ).getOrThrow()

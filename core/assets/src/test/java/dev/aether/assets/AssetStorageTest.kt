@@ -40,6 +40,20 @@ class AssetStorageTest {
     }
 
     @Test
+    fun `rejects svg empty segments and symlinked parent directories`() {
+        storage.initialize()
+        val svgError = (AssetPaths.safeFileName(AssetCategory.ICON, "icon.svg").exceptionOrNull()
+            as? AssetValidationException)?.error
+        assertTrue(svgError is AssetValidationError.UnsafeSvg)
+        assertTrue(storage.resolve("staging//wall.png").isFailure)
+        assertTrue(storage.resolve("staging/./wall.png").isFailure)
+
+        val outside = File(root, "outside").also { it.mkdirs() }
+        Files.createSymbolicLink(File(storagePath(), "staging/escape").toPath(), outside.toPath())
+        assertTrue(storage.resolve("staging/escape/wall.png").isFailure)
+    }
+
+    @Test
     fun `stages promotes and trashes files under the app private root`() {
         storage.initialize()
         val staged = storage.stage("import-1", AssetCategory.WALLPAPER, "wall.png", 5).getOrThrow()
