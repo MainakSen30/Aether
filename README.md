@@ -25,7 +25,7 @@ a feature module in this milestone.
 | Component | Version |
 |---|---|
 | Android Gradle Plugin | 9.3.1 |
-| Gradle wrapper | 9.5.0 |
+| Gradle wrapper | 9.7.0 |
 | Kotlin (KGP) | 2.4.21 |
 | KSP | 2.3.12 |
 | Hilt | 2.60.1 |
@@ -39,6 +39,8 @@ a feature module in this milestone.
 No networking, auth, analytics, backend, cloud, or third-party UI libraries are included.
 
 AGP 9.3 requires Gradle 9.5.0 or newer; KSP 2.3.12 supports KGP 2.3.20–2.4.x and AGP 8.13+.
+Gradle is pinned to 9.7.0 because KGP 2.4.21 lists 9.7.0 as its maximum fully supported Gradle version;
+newer Gradle releases require a coordinated Kotlin/KSP upgrade.
 Versions were resolved against Google Maven and Maven Central before implementation.
 
 ## 3. Module structure
