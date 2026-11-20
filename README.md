@@ -82,7 +82,7 @@ data, assets → app
 - **`:core:model`** — `ThemeId`, `AssetId`, strongly typed theme/asset/settings models. No Android dependency.
 - **`:core:domain`** — `ThemeRepository`, `AssetRepository`, `PreferencesRepository`. No Room, Compose, or Android dependency.
 - **`:core:data`** — Room database v1 with exported schema, entities, DAOs, DataStore, repository implementations, Hilt `DataModule`.
-- **`:core:assets`** — `AssetStorage`, `AppPrivateAssetStorage`, `AssetPaths`, `AssetValidator`, `AssetEngine`; import staging, content validation, and lifecycle foundations.
+- **`:core:assets`** — `AssetStorage`, `AppPrivateAssetStorage`, `AssetPaths`, `AssetValidator`, `AssetEngine`, `AssetRecoveryInitializer`; import staging, content validation, lifecycle foundations, and startup recovery scheduling.
 - **`:core:theme`** — `ThemeCatalog`, `Aether Black`, `ThemeResolver`, `ThemePackageValidator`, `ThemeInheritanceValidator`, `ThemePackageCodec`, `ThemeController`.
 - **`:core:designsystem`** — `AetherTheme`, color/typography/shape/dimension mapping, `AetherSurface`.
 - **`:feature:launcher`** — `LauncherScreen`, `LauncherUiState`, `LauncherViewModel`.
@@ -189,6 +189,15 @@ Compose or Room.
 - Filesystem/Room coordination is compensating: `PENDING_TRASH`, `PENDING_RESTORE`, and
   `PENDING_DELETE` markers are recovered or reverted by `AssetEngine.recover()`. Room transactions
   keep metadata and import status consistent for database-only steps.
+- Startup automatically calls `AssetRecoveryInitializer.start()` from `AetherApplication.onCreate()`.
+  It uses the singleton Hilt-provided `AssetEngine` on `Dispatchers.IO`, returns before recovery
+  finishes, and therefore never blocks the first Compose frame. The launch is one-shot per process;
+  repeated/concurrent startup calls do not start a second recovery. Marker states make the replay
+  idempotent.
+- Recovery outcomes are published on `AssetRecoveryInitializer.completion`. Failures are logged with
+  the aggregated exception (including suppressed per-asset failures); marker rows are left intact so
+  the next startup can retry instead of pretending an incomplete operation succeeded. Asset-specific
+  failures do not abort application startup.
 - `cleanupAbandonedStaging()` removes stale staging entries and stale `STAGED` records;
   `cleanupTemporary()` removes unreferenced temporary assets.
 - Multiple consumers can reference one asset through `asset_references`. Reference removal targets
@@ -201,7 +210,7 @@ Compose or Room.
 - `DataModule` (`@InstallIn(SingletonComponent::class)`): Room database, DAOs, DataStore,
   `PreferencesRepository`, `ThemeRepository`, `AssetRepository`.
 - `AppModule` (`@InstallIn(SingletonComponent::class)`): `AssetStorage` rooted at `filesDir/aether`,
-  `AssetEngine`, `ThemeCatalog`, `ThemeResolver`, `ThemeController`.
+  `AssetEngine`, `AssetRecoveryInitializer`, `ThemeCatalog`, `ThemeResolver`, `ThemeController`.
 - Features inject interfaces/controllers; fakes can replace repositories and `AssetStorage` in tests.
 
 ## 10. Build and run
@@ -256,7 +265,8 @@ Equivalent local verification (with `local.properties` pointing at your Android 
 - Preview is suspend-based because it reads persisted definitions; no Theme Studio UI exists yet.
 - Asset Engine now covers transactional registration, trash, restore, permanent deletion, recovery,
   and cleanup, but there is no byte-stream import UI, media processing, thumbnail generation, or
-  trash/restore UI. Recovery is explicit (`AssetEngine.recover()`), not automatic at app startup.
+  trash/restore UI. Startup recovery is automatic but one-shot per process; a failure is not retried
+  until the next process start.
 - Checksums are verified against stored metadata during registration and recovery, but not against an
   external manifest. Header-level format checks are not a full media decoder.
 - Room schema version 2 has one additive migration from version 1.

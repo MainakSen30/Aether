@@ -471,7 +471,7 @@ private class FailingAssetStorage(private val delegate: AssetStorage) : AssetSto
     override fun clearCache() = delegate.clearCache()
 }
 
-private class FakeAssetRepository : AssetRepository {
+internal class FakeAssetRepository : AssetRepository {
     val metadata = mutableMapOf<String, AssetMetadata>()
     val imports = mutableMapOf<String, AssetImportRecord>()
     val references = mutableListOf<AssetReference>()
@@ -480,10 +480,16 @@ private class FakeAssetRepository : AssetRepository {
     var updateCalls: Int = 0
     var failDeleteAt: Int? = null
     var deleteCalls: Int = 0
+    var getAllCalls: Int = 0
+    var getAllThread: String? = null
 
     override fun observeAssets(): Flow<List<AssetMetadata>> = MutableStateFlow(metadata.values.toList())
 
-    override suspend fun getAll(): List<AssetMetadata> = metadata.values.toList()
+    override suspend fun getAll(): List<AssetMetadata> {
+        getAllCalls++
+        getAllThread = Thread.currentThread().name
+        return metadata.values.toList()
+    }
 
     override suspend fun get(id: AssetId): AssetMetadata? = metadata[id.value]
 

@@ -1,6 +1,7 @@
 package dev.aether.launcher.di
 
 import android.content.Context
+import android.util.Log
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -9,6 +10,7 @@ import dagger.hilt.components.SingletonComponent
 import dev.aether.assets.AppPrivateAssetStorage
 import dev.aether.assets.AssetEngine
 import dev.aether.assets.AssetPaths
+import dev.aether.assets.AssetRecoveryInitializer
 import dev.aether.assets.AssetStorage
 import dev.aether.domain.AssetRepository
 import dev.aether.domain.ThemeRepository
@@ -18,6 +20,7 @@ import dev.aether.theme.ThemeController
 import dev.aether.theme.ThemeResolver
 import java.io.File
 import javax.inject.Singleton
+import kotlinx.coroutines.Dispatchers
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -34,6 +37,17 @@ object AppModule {
         storage: AssetStorage,
         repository: AssetRepository,
     ): AssetEngine = AssetEngine(storage, repository)
+
+    @Provides
+    @Singleton
+    fun provideAssetRecoveryInitializer(assetEngine: AssetEngine): AssetRecoveryInitializer =
+        AssetRecoveryInitializer(
+            assetEngine = assetEngine,
+            dispatcher = Dispatchers.IO,
+            onFailure = { failure ->
+                Log.e("AssetRecovery", "Asset Engine startup recovery failed", failure)
+            },
+        )
 
     @Provides
     @Singleton
