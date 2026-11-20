@@ -242,11 +242,18 @@ choose Aether in Android's default-launcher dialog; the app never changes the de
 `.github/workflows/android-ci.yml` runs on pushes to `main`, pull requests targeting `main`, and manual
 `workflow_dispatch`. On a GitHub-hosted Ubuntu runner it validates the Gradle wrapper, sets up JDK 17
 and Android SDK platform 36/build-tools 36.1.0, configures Gradle caching, verifies project
-configuration, runs `./gradlew test :app:assembleDebug --no-daemon`, checks that the APK is non-empty,
-and uploads it as the `aether-debug-apk` workflow artifact with 14-day retention.
+configuration, and runs `./gradlew test :app:assembleDebug --no-daemon`.
+
+Before upload, the workflow verifies that `app/build/outputs/apk/debug/app-debug.apk` exists, is
+non-empty, can be inspected by Android build-tools `aapt dump badging`, declares package
+`dev.aether.launcher`, versionCode `1`, and versionName `0.1.0`, and passes `apksigner verify`.
+`apksigner --print-certs` also confirms that a signer DN and certificate digest are inspectable.
+This verifies **debug signing only**; no production release signing key or fingerprint is required or
+asserted. The APK is uploaded only after every check passes, as the `aether-debug-apk` workflow
+artifact with 14-day retention.
 
 Find the APK in the successful run's **Artifacts** section as `aether-debug-apk`; the archive contains
-`app/build/outputs/apk/debug/app-debug.apk`.
+only `app/build/outputs/apk/debug/app-debug.apk`.
 
 Equivalent local verification (with `local.properties` pointing at your Android SDK):
 

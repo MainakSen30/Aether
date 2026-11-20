@@ -52,9 +52,49 @@ jobs:
         run: ./gradlew test :app:assembleDebug --no-daemon
 
       - name: Verify debug APK
+        shell: bash
         run: |
-          test -s app/build/outputs/apk/debug/app-debug.apk
-          ls -lh app/build/outputs/apk/debug/app-debug.apk
+          set -euo pipefail
+
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          EXPECTED_PACKAGE="dev.aether.launcher"
+          EXPECTED_VERSION_CODE="1"
+          EXPECTED_VERSION_NAME="0.1.0"
+          BUILD_TOOLS="${ANDROID_HOME}/build-tools/36.1.0"
+          AAPT="${BUILD_TOOLS}/aapt"
+          APKSIGNER="${BUILD_TOOLS}/apksigner"
+
+          test -f "$APK"
+          test -s "$APK"
+          ls -lh "$APK"
+          test -x "$AAPT"
+          test -x "$APKSIGNER"
+
+          BADGING="$("$AAPT" dump badging "$APK")"
+          PACKAGE="$(printf '%s\n' "$BADGING" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")"
+          VERSION_CODE="$(printf '%s\n' "$BADGING" | sed -n "s/^package:.* versionCode='\([^']*\)'.*/\1/p")"
+          VERSION_NAME="$(printf '%s\n' "$BADGING" | sed -n "s/^package:.* versionName='\([^']*\)'.*/\1/p")"
+
+          printf 'package=%s versionCode=%s versionName=%s\n' \
+            "$PACKAGE" "$VERSION_CODE" "$VERSION_NAME"
+
+          [[ "$PACKAGE" == "$EXPECTED_PACKAGE" ]] || {
+            echo "Unexpected package: $PACKAGE (expected $EXPECTED_PACKAGE)" >&2
+            exit 1
+          }
+          [[ "$VERSION_CODE" == "$EXPECTED_VERSION_CODE" ]] || {
+            echo "Unexpected versionCode: $VERSION_CODE (expected $EXPECTED_VERSION_CODE)" >&2
+            exit 1
+          }
+          [[ "$VERSION_NAME" == "$EXPECTED_VERSION_NAME" ]] || {
+            echo "Unexpected versionName: $VERSION_NAME (expected $EXPECTED_VERSION_NAME)" >&2
+            exit 1
+          }
+
+          SIGNER_OUTPUT="$("$APKSIGNER" verify --print-certs "$APK")"
+          printf '%s\n' "$SIGNER_OUTPUT"
+          printf '%s\n' "$SIGNER_OUTPUT" | grep -q '^Signer #1 certificate DN: .'
+          printf '%s\n' "$SIGNER_OUTPUT" | grep -q '^Signer #1 certificate SHA-256 digest: '
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v7.0.2
