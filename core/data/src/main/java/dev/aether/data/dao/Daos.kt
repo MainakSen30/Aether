@@ -2,6 +2,7 @@ package dev.aether.data.dao
 
 import androidx.room.Dao
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Upsert
 import dev.aether.data.entity.AssetImportRecordEntity
 import dev.aether.data.entity.AssetMetadataEntity
@@ -23,8 +24,11 @@ interface ThemeMetadataDao {
 
 @Dao
 interface AssetDao {
-    @Query("SELECT * FROM asset_metadata WHERE state != 'TRASHED'")
+    @Query("SELECT * FROM asset_metadata WHERE state = 'REGISTERED'")
     fun observeAssets(): Flow<List<AssetMetadataEntity>>
+
+    @Query("SELECT * FROM asset_metadata")
+    suspend fun getAll(): List<AssetMetadataEntity>
 
     @Query("SELECT * FROM asset_metadata WHERE id = :id")
     suspend fun get(id: String): AssetMetadataEntity?
@@ -32,8 +36,26 @@ interface AssetDao {
     @Upsert
     suspend fun upsert(entity: AssetMetadataEntity)
 
-    @Query("UPDATE asset_metadata SET state = 'TRASHED' WHERE id = :id")
-    suspend fun markTrashed(id: String)
+    @Transaction
+    suspend fun upsertWithImport(
+        entity: AssetMetadataEntity,
+        record: AssetImportRecordEntity,
+    ) {
+        upsert(entity)
+        upsertImport(record)
+    }
+
+    @Transaction
+    suspend fun updateWithImportStatus(
+        entity: AssetMetadataEntity,
+        status: String,
+    ) {
+        upsert(entity)
+        setImportStatus(entity.id, status)
+    }
+
+    @Query("UPDATE asset_imports SET status = :status WHERE assetId = :assetId")
+    suspend fun setImportStatus(assetId: String, status: String)
 
     @Query("DELETE FROM asset_metadata WHERE id = :id")
     suspend fun delete(id: String)
@@ -44,9 +66,12 @@ interface AssetDao {
     @Upsert
     suspend fun addReference(reference: AssetReferenceEntity)
 
-    @Query("DELETE FROM asset_references WHERE assetId = :assetId AND consumerId = :consumerId")
-    suspend fun removeReference(assetId: String, consumerId: String)
+    @Query(
+        "DELETE FROM asset_references " +
+            "WHERE assetId = :assetId AND consumerType = :consumerType AND consumerId = :consumerId",
+    )
+    suspend fun removeReference(assetId: String, consumerType: String, consumerId: String)
 
     @Upsert
-    suspend fun recordImport(record: AssetImportRecordEntity)
+    suspend fun upsertImport(record: AssetImportRecordEntity)
 }

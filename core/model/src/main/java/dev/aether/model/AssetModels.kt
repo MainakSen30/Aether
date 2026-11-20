@@ -2,7 +2,14 @@ package dev.aether.model
 
 enum class AssetCategory { WALLPAPER, ICON, THEME_IMAGE, FONT, THUMBNAIL, OTHER }
 
-enum class AssetState { STAGED, REGISTERED, TRASHED }
+enum class AssetState {
+    STAGED,
+    REGISTERED,
+    PENDING_TRASH,
+    TRASHED,
+    PENDING_RESTORE,
+    PENDING_DELETE,
+}
 
 enum class AssetOwnership { TEMPORARY, USER_MANAGED }
 

@@ -4,8 +4,6 @@ import dev.aether.model.AssetCategory
 import dev.aether.model.AssetId
 import java.io.File
 import java.nio.file.Files
-import java.nio.file.StandardCopyOption
-import java.util.UUID
 
 /** Root must come from Context.filesDir, never from a hardcoded or external path. */
 class AppPrivateAssetStorage(private val root: File) : AssetStorage {
@@ -55,19 +53,19 @@ class AppPrivateAssetStorage(private val root: File) : AssetStorage {
     override fun resolve(relativePath: String): Result<File> = AssetPaths.resolve(root, relativePath)
 
     override fun promote(stagedRelativePath: String, originalRelativePath: String): Result<File> =
-        runCatching {
-            val source = resolve(stagedRelativePath).getOrThrow()
-            require(source.isFile) { "Staged file is missing: $stagedRelativePath" }
-            val target = resolve(originalRelativePath).getOrThrow()
-            target.parentFile?.mkdirs()
-            Files.move(source.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING).toFile()
-        }
+        move(stagedRelativePath, originalRelativePath)
 
     override fun moveToTrash(relativePath: String): Result<File> = runCatching {
-        val source = resolve(relativePath).getOrThrow()
-        require(source.isFile) { "File is missing: $relativePath" }
-        val name = "${UUID.randomUUID()}-${source.name}"
-        val target = resolve("trash/$name").getOrThrow()
+        val (assetId, extension) = parseOriginalPath(relativePath)
+        move(relativePath, AssetPaths.trashRelativePath(assetId, extension).getOrThrow()).getOrThrow()
+    }
+
+    override fun move(sourceRelativePath: String, targetRelativePath: String): Result<File> = runCatching {
+        val source = resolve(sourceRelativePath).getOrThrow()
+        require(source.isFile) { "Source file is missing: $sourceRelativePath" }
+        val target = resolve(targetRelativePath).getOrThrow()
+        require(!target.exists()) { "Target already exists: $targetRelativePath" }
+        target.parentFile?.mkdirs()
         Files.move(source.toPath(), target.toPath()).toFile()
     }
 
@@ -78,7 +76,32 @@ class AppPrivateAssetStorage(private val root: File) : AssetStorage {
         }
     }
 
+    override fun cleanupAbandonedStaging(maxAgeMillis: Long): Result<Int> = runCatching {
+        val cutoff = System.currentTimeMillis() - maxAgeMillis
+        val staging = resolve("staging").getOrThrow()
+        var removed = 0
+        staging.listFiles()?.forEach { entry ->
+            if (entry.lastModified() < cutoff) {
+                require(entry.deleteRecursively()) { "Could not clean staging entry: ${entry.name}" }
+                removed++
+            }
+        }
+        removed
+    }
+
     override fun clearCache() {
         resolve("cache").getOrNull()?.listFiles()?.forEach { it.deleteRecursively() }
+    }
+
+    private fun parseOriginalPath(relativePath: String): Pair<String, String> {
+        val parts = relativePath.split('/')
+        require(parts.size == 3 && parts.first() == "originals") {
+            "Not an original asset path: $relativePath"
+        }
+        val fileName = parts.last()
+        require(fileName.contains('.')) { "Original path has no extension: $relativePath" }
+        val assetId = AssetPaths.safeSegment(fileName.substringBeforeLast('.')).getOrThrow()
+        val extension = AssetPaths.safeSegment(fileName.substringAfterLast('.')).getOrThrow()
+        return assetId to extension
     }
 }

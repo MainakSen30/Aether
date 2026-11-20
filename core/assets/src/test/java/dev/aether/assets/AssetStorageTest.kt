@@ -55,9 +55,25 @@ class AssetStorageTest {
         assertEquals("hello", original.readText())
         assertFalse(staged.exists())
 
+        val trashRelative = AssetPaths.trashRelativePath(assetId.value, "png").getOrThrow()
         val trashed = storage.moveToTrash(relative).getOrThrow()
+        assertEquals(storage.resolve(trashRelative).getOrThrow().canonicalPath, trashed.canonicalPath)
         assertTrue(trashed.canonicalPath.startsWith(File(storagePath(), "trash").canonicalPath))
         assertFalse(original.exists())
+    }
+
+    @Test
+    fun `move does not overwrite an occupied target`() {
+        storage.initialize()
+        val source = storage.resolve("cache/source.txt").getOrThrow().also { it.writeText("new") }
+        val target = storage.resolve("originals/wallpaper/occupied.txt").getOrThrow().also {
+            it.parentFile?.mkdirs()
+            it.writeText("old")
+        }
+
+        assertTrue(storage.move("cache/source.txt", "originals/wallpaper/occupied.txt").isFailure)
+        assertEquals("new", source.readText())
+        assertEquals("old", target.readText())
     }
 
     @Test

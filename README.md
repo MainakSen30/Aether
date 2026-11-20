@@ -111,6 +111,10 @@ Compose or Room.
 - **App-private filesystem** (`filesDir/aether/`): `staging/`, `originals/`, `thumbnails/`, `cache/`,
   `trash/`. Paths are relative and validated against the canonical root (including symlinks).
 - No binary assets are stored in Room or DataStore. Cache is never authoritative.
+- Asset state strings use the existing `state` column; lifecycle markers added in Milestone 1 need
+  **no schema change**, so Room remains version 1 and the exported schema is unchanged.
+- Room transactions group metadata and import-status writes; filesystem changes use marker states
+  and explicit recovery instead of pretending to share a transaction with Room.
 - Room and DataStore do **not** share a transaction. `ThemeRepositoryImpl.activate` validates
   metadata first, then writes DataStore; `ThemeController` publishes runtime state only on success.
 - No production migration exists yet; destructive migration is not used.
@@ -135,11 +139,24 @@ Compose or Room.
   `AssetEngine.register` promotes a staged file into `originals/<category>/<assetId>.<ext>` and stores
   metadata with a SHA-256 checksum and a relative path.
 - `AssetPaths` rejects traversal, absolute paths, unsafe file names, unsupported extensions, and
-  sizes above 128 MiB; canonical path checks stop symlink escapes.
-- Multiple consumers can reference one asset through `asset_references`; deletion is rejected while
-  references exist.
-- Temporary assets are deleted; user-managed assets move to `trash/` and are marked `TRASHED`
-  (recoverable). Cleanup of the trash itself is a later milestone.
+  sizes above 128 MiB; canonical path checks stop symlink escapes. Moves never overwrite an occupied
+  target.
+- Explicit states are `STAGED`, `REGISTERED`, `PENDING_TRASH`, `TRASHED`, `PENDING_RESTORE`, and
+  `PENDING_DELETE`. Only `REGISTERED` is published by `observeAssets()`.
+- Trashing uses a deterministic app-relative path, `trash/<assetId>.<ext>`. The original path is
+  reconstructed from the stable asset ID, category, and extension; no absolute path is persisted.
+  `delete()` is idempotent for already-trashed assets and `restore()` is idempotent for active assets.
+- `restore()` refuses to overwrite an occupied original path. `permanentlyDelete()` removes the
+  trashed file and metadata; repeated calls are safe.
+- Filesystem/Room coordination is compensating: `PENDING_TRASH`, `PENDING_RESTORE`, and
+  `PENDING_DELETE` markers are recovered or reverted by `AssetEngine.recover()`. Room transactions
+  keep metadata and import status consistent for database-only steps.
+- `cleanupAbandonedStaging()` removes stale staging entries and stale `STAGED` records;
+  `cleanupTemporary()` removes unreferenced temporary assets.
+- Multiple consumers can reference one asset through `asset_references`. Reference removal targets
+  the exact `(assetId, consumerType, consumerId)` row, and deletion is rejected while any valid
+  reference remains.
+- Temporary assets are deleted permanently; user-managed assets are recoverable from trash.
 
 ## 9. Dependency injection structure
 
@@ -181,8 +198,9 @@ choose Aether in Android's default-launcher dialog; the app never changes the de
 - Built-in themes are not seeded into `theme_metadata`; `activate()` currently requires pre-existing
   metadata, so activation is a foundation rather than an end-user flow.
 - Theme JSON import has codec + validator but no UI or storage pipeline.
-- Asset import has staging/promotion/trash foundations but no byte-stream import UI, processing,
-  thumbnail generation, or trash restore UI.
+- Asset Engine now covers transactional registration, trash, restore, permanent deletion, recovery,
+  and cleanup, but there is no byte-stream import UI, media processing, thumbnail generation, or
+  trash/restore UI. Recovery is explicit (`AssetEngine.recover()`), not automatic at app startup.
 - Checksums are computed but not yet verified against an external manifest.
 - Room schema version 1 has no migrations yet.
 - Only local JVM unit tests exist; there are no instrumented/device tests in this milestone.

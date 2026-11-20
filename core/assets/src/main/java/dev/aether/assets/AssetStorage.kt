@@ -15,6 +15,8 @@ interface AssetStorage {
     fun resolve(relativePath: String): Result<File>
     fun promote(stagedRelativePath: String, originalRelativePath: String): Result<File>
     fun moveToTrash(relativePath: String): Result<File>
+    fun move(sourceRelativePath: String, targetRelativePath: String): Result<File>
     fun delete(relativePath: String): Result<Unit>
+    fun cleanupAbandonedStaging(maxAgeMillis: Long): Result<Int>
     fun clearCache()
 }

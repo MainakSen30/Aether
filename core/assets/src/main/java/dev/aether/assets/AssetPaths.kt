@@ -58,4 +58,22 @@ object AssetPaths {
             val safeExtension = safeSegment(extension).getOrThrow()
             "originals/${category.name.lowercase()}/$safeId.$safeExtension"
         }
+
+    /** Stable trash name derived from the asset ID, so restoration never needs an absolute path. */
+    fun trashRelativePath(assetId: String, extension: String): Result<String> = runCatching {
+        "trash/${safeSegment(assetId).getOrThrow()}.${safeSegment(extension).getOrThrow()}"
+    }
+
+    /** Reconstructs the canonical original path from metadata that is already in the trash. */
+    fun originalPathFromTrash(
+        assetId: String,
+        category: AssetCategory,
+        trashRelativePath: String,
+    ): Result<String> = runCatching {
+        val name = trashRelativePath.substringAfterLast('/')
+        val safeId = safeSegment(assetId).getOrThrow()
+        require(name.startsWith("$safeId.")) { "Trash path does not match asset: $trashRelativePath" }
+        val extension = safeSegment(name.substringAfterLast('.')).getOrThrow()
+        originalRelativePath(safeId, category, extension).getOrThrow()
+    }
 }
